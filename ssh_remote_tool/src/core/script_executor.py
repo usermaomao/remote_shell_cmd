@@ -1,5 +1,5 @@
 import threading
-from .ssh_manager import SSHManager
+from core.ssh_manager import SSHManager
 
 class ScriptExecutor:
     def __init__(self, ssh_manager: SSHManager):

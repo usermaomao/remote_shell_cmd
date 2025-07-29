@@ -1,6 +1,6 @@
 import os
 import stat
-from .ssh_manager import SSHManager
+from core.ssh_manager import SSHManager
 
 class FileManager:
     def __init__(self, ssh_manager: SSHManager):

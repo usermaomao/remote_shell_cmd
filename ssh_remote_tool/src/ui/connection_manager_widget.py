@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QMenu
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from ..core.ssh_manager import SSHManager
+from core.ssh_manager import SSHManager
 
 class ConnectionDialog(QDialog):
     def __init__(self, connection_data=None, parent=None):
@@ -108,9 +108,19 @@ class ConnectionManagerWidget(QWidget):
         button_layout.addWidget(self.delete_btn)
         self.layout.addLayout(button_layout)
 
+        # Import/Export buttons
+        import_export_layout = QHBoxLayout()
+        self.import_btn = QPushButton("Import...")
+        self.export_btn = QPushButton("Export...")
+        import_export_layout.addWidget(self.import_btn)
+        import_export_layout.addWidget(self.export_btn)
+        self.layout.addLayout(import_export_layout)
+
         self.add_btn.clicked.connect(self.add_connection)
         self.edit_btn.clicked.connect(self.edit_connection)
         self.delete_btn.clicked.connect(self.delete_connection)
+        self.import_btn.clicked.connect(self.import_connections)
+        self.export_btn.clicked.connect(self.export_connections)
 
         self.load_connections()
 
@@ -194,3 +204,79 @@ class ConnectionManagerWidget(QWidget):
             self.edit_connection()
         elif action == delete_action:
             self.delete_connection()
+
+    def import_connections(self):
+        """Import connections from JSON file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Connections", "", "JSON Files (*.json);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                import json
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    imported_connections = json.load(f)
+
+                # Validate and add connections
+                imported_count = 0
+                for name, data in imported_connections.items():
+                    if self._validate_connection_data(data):
+                        # Avoid name conflicts
+                        original_name = name
+                        counter = 1
+                        while name in self.ssh_manager.get_all_connections():
+                            name = f"{original_name}_{counter}"
+                            counter += 1
+
+                        data['name'] = name
+                        self.ssh_manager.add_connection(data)
+                        imported_count += 1
+
+                self.load_connections()
+                QMessageBox.information(
+                    self, "Import Complete",
+                    f"Successfully imported {imported_count} connections."
+                )
+
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Failed to import connections: {e}")
+
+    def export_connections(self):
+        """Export connections to JSON file"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Connections", "connections.json", "JSON Files (*.json);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                import json
+                connections = self.ssh_manager.get_all_connections()
+
+                # Remove sensitive data for export
+                export_data = {}
+                for name, data in connections.items():
+                    export_data[name] = {
+                        'name': data.get('name', ''),
+                        'host': data.get('host', ''),
+                        'port': data.get('port', 22),
+                        'user': data.get('user', ''),
+                        'auth_method': data.get('auth_method', 'password'),
+                        'key_path': data.get('key_path', '') if data.get('auth_method') == 'key' else ''
+                        # Note: passwords are not exported for security
+                    }
+
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(export_data, f, indent=4, ensure_ascii=False)
+
+                QMessageBox.information(
+                    self, "Export Complete",
+                    f"Successfully exported {len(export_data)} connections to {file_path}"
+                )
+
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", f"Failed to export connections: {e}")
+
+    def _validate_connection_data(self, data):
+        """Validate connection data structure"""
+        required_fields = ['host', 'user']
+        return all(field in data and data[field] for field in required_fields)

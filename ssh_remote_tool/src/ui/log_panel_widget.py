@@ -1,14 +1,32 @@
 import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTextBrowser, QPushButton, QHBoxLayout,
-    QFileDialog
+    QFileDialog, QComboBox, QLabel, QCheckBox
 )
 from PyQt6.QtGui import QColor, QTextCursor
+from PyQt6.QtCore import Qt
 
 class LogPanelWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
+        self.all_logs = []  # Store all log entries for filtering
+
+        # Filter controls
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter:"))
+
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["All", "Info", "Success", "Error", "Output"])
+        self.filter_combo.currentTextChanged.connect(self.apply_filter)
+        filter_layout.addWidget(self.filter_combo)
+
+        self.auto_scroll_checkbox = QCheckBox("Auto Scroll")
+        self.auto_scroll_checkbox.setChecked(True)
+        filter_layout.addWidget(self.auto_scroll_checkbox)
+
+        filter_layout.addStretch()
+        self.layout.addLayout(filter_layout)
 
         self.log_display = QTextBrowser()
         self.log_display.setReadOnly(True)
@@ -22,30 +40,66 @@ class LogPanelWidget(QWidget):
         button_layout.addWidget(self.export_btn)
         self.layout.addLayout(button_layout)
 
-        self.clear_btn.clicked.connect(self.log_display.clear)
+        self.clear_btn.clicked.connect(self.clear_logs)
         self.export_btn.clicked.connect(self.export_log)
 
     def add_log(self, message, msg_type='info'):
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        color_map = {
-            'stdout': 'black',
-            'stderr': 'red',
-            'info': 'blue',
-            'success': 'green'
+        # Store the log entry
+        log_entry = {
+            'timestamp': timestamp,
+            'message': message,
+            'type': msg_type
         }
-        color = color_map.get(msg_type, 'black')
+        self.all_logs.append(log_entry)
 
-        formatted_message = f'<span style="color: {color};"><b>[{timestamp}] [{msg_type.upper()}]</b>: {message}</span>'
+        # Apply current filter
+        self.apply_filter()
 
-        self.log_display.append(formatted_message)
-        self.log_display.moveCursor(QTextCursor.MoveOperation.End)
+    def apply_filter(self):
+        """Apply the current filter to the log display"""
+        filter_type = self.filter_combo.currentText().lower()
+
+        self.log_display.clear()
+
+        for log_entry in self.all_logs:
+            msg_type = log_entry['type']
+
+            # Check if this log entry should be displayed
+            if filter_type == 'all' or \
+               (filter_type == 'info' and msg_type == 'info') or \
+               (filter_type == 'success' and msg_type == 'success') or \
+               (filter_type == 'error' and msg_type in ['stderr', 'error']) or \
+               (filter_type == 'output' and msg_type in ['stdout', 'stderr']):
+
+                color_map = {
+                    'stdout': 'black',
+                    'stderr': 'red',
+                    'info': 'blue',
+                    'success': 'green'
+                }
+                color = color_map.get(msg_type, 'black')
+
+                formatted_message = f'<span style="color: {color};"><b>[{log_entry["timestamp"]}] [{msg_type.upper()}]</b>: {log_entry["message"]}</span>'
+                self.log_display.append(formatted_message)
+
+        # Auto scroll to end if enabled
+        if self.auto_scroll_checkbox.isChecked():
+            self.log_display.moveCursor(QTextCursor.MoveOperation.End)
+
+    def clear_logs(self):
+        """Clear all logs"""
+        self.all_logs.clear()
+        self.log_display.clear()
 
     def export_log(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export Log", "", "Log Files (*.log);;Text Files (*.txt)")
         if path:
             try:
-                with open(path, 'w') as f:
-                    f.write(self.log_display.toPlainText())
+                with open(path, 'w', encoding='utf-8') as f:
+                    for log_entry in self.all_logs:
+                        f.write(f"[{log_entry['timestamp']}] [{log_entry['type'].upper()}]: {log_entry['message']}\n")
+                self.add_log(f"Log exported to {path}", "success")
             except Exception as e:
                 self.add_log(f"Failed to export log: {e}", "stderr")

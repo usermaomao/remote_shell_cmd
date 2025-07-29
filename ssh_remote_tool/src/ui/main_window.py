@@ -1,17 +1,17 @@
 import sys
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QSplitter, QTextEdit, QTabWidget
+    QSplitter, QTextEdit, QTabWidget, QStatusBar, QLabel
 )
 from PyQt6.QtCore import Qt
 
-from ..core.ssh_manager import SSHManager
-from ..core.file_manager import FileManager
-from ..core.script_executor import ScriptExecutor
-from .connection_manager_widget import ConnectionManagerWidget
-from .file_browser_widget import FileBrowserWidget
-from .script_panel_widget import ScriptPanelWidget
-from .log_panel_widget import LogPanelWidget
+from core.ssh_manager import SSHManager
+from core.file_manager import FileManager
+from core.script_executor import ScriptExecutor
+from ui.connection_manager_widget import ConnectionManagerWidget
+from ui.file_browser_widget import FileBrowserWidget
+from ui.script_panel_widget import ScriptPanelWidget
+from ui.log_panel_widget import LogPanelWidget
 
 
 class MainWindow(QMainWindow):
@@ -54,6 +54,9 @@ class MainWindow(QMainWindow):
         self.connection_manager.connection_selected.connect(self.script_panel.set_connection)
         self.script_panel.log_message.connect(self.log_panel.add_log)
 
+        # Connect file manager to log panel for file operation messages
+        # Note: In a full implementation, file_manager would emit signals for logging
+
         # Set initial sizes for the vertical splitter
         main_content_splitter.setSizes([600, 300]) # 60% and 40% of 900px height
 
@@ -64,6 +67,33 @@ class MainWindow(QMainWindow):
         main_splitter.setSizes([280, 1120]) # 20% and 80% of 1400px width
 
         self.setCentralWidget(main_splitter)
+
+        # Add status bar
+        self.setup_status_bar()
+
+    def setup_status_bar(self):
+        """Setup the status bar"""
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+        # Connection status label
+        self.connection_status_label = QLabel("Not connected")
+        self.status_bar.addWidget(self.connection_status_label)
+
+        # Add permanent widget for app info
+        self.app_info_label = QLabel("SSH Remote Operations Tool v1.0")
+        self.status_bar.addPermanentWidget(self.app_info_label)
+
+        # Connect to connection manager signals to update status
+        self.connection_manager.connection_selected.connect(self.update_connection_status)
+
+    def update_connection_status(self, connection_name):
+        """Update the connection status in status bar"""
+        if connection_name:
+            self.connection_status_label.setText(f"Connected to: {connection_name}")
+            self.log_panel.add_log(f"Connected to {connection_name}", "success")
+        else:
+            self.connection_status_label.setText("Not connected")
 
 def main():
     # This is for testing this component independently.

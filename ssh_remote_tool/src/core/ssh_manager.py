@@ -1,7 +1,8 @@
 import paramiko
 import os
 import json
-from .credentials_manager import CredentialsManager, load_or_generate_key
+import stat
+from core.credentials_manager import CredentialsManager, load_or_generate_key
 
 CONFIG_FILE = "connections.json"
 
@@ -73,6 +74,11 @@ class SSHManager:
                 key_path = conn_data.get('key_path')
                 if not key_path or not os.path.exists(key_path):
                     raise ValueError(f"SSH key not found at path: {key_path}")
+
+                # Validate key file permissions (Unix-like systems)
+                if os.name != 'nt':  # Not Windows
+                    self._validate_key_permissions(key_path)
+
                 client.connect(
                     hostname=conn_data['host'],
                     port=conn_data.get('port', 22),
@@ -103,3 +109,24 @@ class SSHManager:
 
     def get_client(self, name):
         return self.active_clients.get(name)
+
+    def _validate_key_permissions(self, key_path):
+        """Validate SSH key file permissions (Unix-like systems only)"""
+        try:
+            file_stat = os.stat(key_path)
+            file_mode = stat.filemode(file_stat.st_mode)
+
+            # Check if file is readable by owner only (600 or 400)
+            permissions = file_stat.st_mode & 0o777
+            if permissions not in [0o600, 0o400]:
+                # Try to fix permissions
+                try:
+                    os.chmod(key_path, 0o600)
+                    print(f"Fixed SSH key permissions for {key_path}")
+                except OSError:
+                    raise ValueError(
+                        f"SSH key file {key_path} has insecure permissions ({oct(permissions)}). "
+                        f"Please set permissions to 600 (owner read/write only)."
+                    )
+        except OSError as e:
+            raise ValueError(f"Cannot access SSH key file {key_path}: {e}")
