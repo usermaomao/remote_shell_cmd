@@ -4,11 +4,30 @@ import posixpath
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QPushButton,
     QLineEdit, QLabel, QSplitter, QHeaderView,
-    QMenu, QMessageBox, QInputDialog
+    QMenu, QMessageBox, QInputDialog, QProgressBar
 )
-from PyQt6.QtCore import QDir, Qt, QModelIndex
+from PyQt6.QtCore import QDir, Qt, QModelIndex, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon, QStandardItemModel, QStandardItem, QFileSystemModel
 from core.file_manager import FileManager
+
+class DirectoryLoadWorker(QThread):
+    """Worker thread for loading directory contents asynchronously"""
+    files_loaded = pyqtSignal(list)  # Signal emitted when files are loaded
+    error_occurred = pyqtSignal(str)  # Signal emitted when error occurs
+
+    def __init__(self, file_manager, connection_name, remote_path):
+        super().__init__()
+        self.file_manager = file_manager
+        self.connection_name = connection_name
+        self.remote_path = remote_path
+
+    def run(self):
+        """Load directory contents in background thread"""
+        try:
+            files = self.file_manager.list_directory(self.connection_name, self.remote_path)
+            self.files_loaded.emit(files)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 class RemoteFileModel(QStandardItemModel):
     def __init__(self, parent=None):
@@ -16,30 +35,49 @@ class RemoteFileModel(QStandardItemModel):
         self.setHorizontalHeaderLabels(['Name', 'Size', 'Type', 'Modified'])
 
     def populate(self, files):
-        self.removeRows(0, self.rowCount())
+        """Populate model with files - optimized for large directories"""
+        # Clear existing items efficiently
+        self.clear()
+        self.setHorizontalHeaderLabels(['Name', 'Size', 'Type', 'Modified'])
+
+        # Batch insert for better performance
+        items = []
         for f in files:
             name_item = QStandardItem(f['name'])
             name_item.setData(f, Qt.ItemDataRole.UserRole)
             name_item.setEditable(False)
 
-            size_item = QStandardItem(str(f['size']))
+            # Format size more efficiently
+            size_str = str(f['size']) if not f['is_dir'] else ""
+            size_item = QStandardItem(size_str)
             size_item.setEditable(False)
 
             type_item = QStandardItem("Directory" if f['is_dir'] else "File")
             type_item.setEditable(False)
 
-            mtime = datetime.datetime.fromtimestamp(f['mtime']).strftime('%Y-%m-%d %H:%M:%S')
+            # Format timestamp more efficiently
+            try:
+                mtime = datetime.datetime.fromtimestamp(f['mtime']).strftime('%Y-%m-%d %H:%M:%S')
+            except (ValueError, OSError):
+                mtime = "Unknown"
             modified_item = QStandardItem(mtime)
             modified_item.setEditable(False)
 
-            self.appendRow([name_item, size_item, type_item, modified_item])
+            items.append([name_item, size_item, type_item, modified_item])
+
+        # Batch insert all items at once
+        for item_row in items:
+            self.appendRow(item_row)
 
 class FileBrowserWidget(QWidget):
     def __init__(self, file_manager: FileManager, parent=None):
         super().__init__(parent)
         self.file_manager = file_manager
         self.current_connection = None
+        self.ssh_manager = None  # Store ssh_manager reference for accessing connection config
         self.remote_current_path = "/"  # Track current remote path
+        self.load_worker = None  # Background loading worker
+        self.is_loading = False  # Loading state flag
 
         self.layout = QVBoxLayout(self)
 
@@ -114,12 +152,20 @@ class FileBrowserWidget(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         self.remote_path_edit = QLineEdit("/")
+
+        # Add progress bar for loading indication
+        self.remote_progress = QProgressBar()
+        self.remote_progress.setVisible(False)
+        self.remote_progress.setRange(0, 0)  # Indeterminate progress
+
         self.remote_tree = QTreeView()
         self.remote_model = RemoteFileModel()
         self.remote_tree.setModel(self.remote_model)
         self.remote_tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
         layout.addWidget(QLabel("Remote System"))
         layout.addWidget(self.remote_path_edit)
+        layout.addWidget(self.remote_progress)
         layout.addWidget(self.remote_tree)
 
         self.remote_path_edit.returnPressed.connect(self.navigate_to_path)
@@ -179,12 +225,20 @@ class FileBrowserWidget(QWidget):
         self.load_remote_directory()
 
     def go_home(self):
-        """Navigate to home directory"""
+        """Navigate to default directory configured for this connection"""
         if not self.current_connection:
             return
 
-        self.remote_current_path = "/"
-        self.remote_path_edit.setText("/")
+        # Get default directory from connection settings
+        default_dir = "/"
+        if self.ssh_manager and self.current_connection:
+            conn_data = self.ssh_manager.get_connection(self.current_connection)
+            if conn_data:
+                default_dir = conn_data.get("default_dir", "/")
+
+        # Navigate to the default directory
+        self.remote_current_path = self.normalize_remote_path(default_dir)
+        self.remote_path_edit.setText(self.remote_current_path)
         self.load_remote_directory()
 
     def navigate_to_path(self):
@@ -201,6 +255,7 @@ class FileBrowserWidget(QWidget):
 
     def set_connection(self, connection_name, ssh_manager=None):
         self.current_connection = connection_name
+        self.ssh_manager = ssh_manager  # Store ssh_manager reference
 
         # Get default directory from connection settings
         default_dir = "/"
@@ -228,46 +283,78 @@ class FileBrowserWidget(QWidget):
             self.enter_directory(item_data['name'])
 
     def load_remote_directory(self):
-        if not self.current_connection:
+        """Load remote directory asynchronously for better performance"""
+        if not self.current_connection or self.is_loading:
             return
 
         # Get path from edit field and normalize it
         requested_path = self.remote_path_edit.text()
         normalized_path = self.normalize_remote_path(requested_path)
 
-        try:
-            files = self.file_manager.list_directory(self.current_connection, normalized_path)
+        # Start loading indication
+        self.is_loading = True
+        self.remote_progress.setVisible(True)
+        self.refresh_btn.setEnabled(False)
 
-            # Add ".." entry for parent directory if not at root
-            if normalized_path != "/":
-                parent_entry = {
-                    "name": "..",
-                    "size": 0,
-                    "mtime": 0,
-                    "permissions": "drwxr-xr-x",
-                    "is_dir": True,
-                }
-                files.insert(0, parent_entry)
+        # Stop any existing worker
+        if self.load_worker and self.load_worker.isRunning():
+            self.load_worker.terminate()
+            self.load_worker.wait()
 
-            self.remote_model.populate(files)
-            self.remote_current_path = normalized_path
-            self.remote_path_edit.setText(normalized_path)
+        # Create and start background worker
+        self.load_worker = DirectoryLoadWorker(
+            self.file_manager,
+            self.current_connection,
+            normalized_path
+        )
+        self.load_worker.files_loaded.connect(self.on_files_loaded)
+        self.load_worker.error_occurred.connect(self.on_load_error)
+        self.load_worker.finished.connect(self.on_load_finished)
+        self.load_worker.start()
 
-        except Exception as e:
-            error_msg = str(e)
-            QMessageBox.critical(self, "Error", f"Failed to list remote directory '{normalized_path}':\n{error_msg}")
+    def on_files_loaded(self, files):
+        """Handle successful file loading"""
+        # Get current path from worker
+        normalized_path = self.load_worker.remote_path
 
-            # Try to navigate to parent directory on error
-            if normalized_path != "/":
-                parent_path = self.get_parent_path(normalized_path)
-                self.remote_current_path = parent_path
-                self.remote_path_edit.setText(parent_path)
-                self.load_remote_directory()
-            else:
-                # If we can't even access root, there's a connection problem
-                QMessageBox.warning(self, "Connection Error",
-                                  "Cannot access remote filesystem. Please check your connection.")
-                self.remote_model.populate([])
+        # Add ".." entry for parent directory if not at root
+        if normalized_path != "/":
+            parent_entry = {
+                "name": "..",
+                "size": 0,
+                "mtime": 0,
+                "permissions": "drwxr-xr-x",
+                "is_dir": True,
+            }
+            files.insert(0, parent_entry)
+
+        self.remote_model.populate(files)
+        self.remote_current_path = normalized_path
+        self.remote_path_edit.setText(normalized_path)
+
+    def on_load_error(self, error_msg):
+        """Handle loading error"""
+        normalized_path = self.load_worker.remote_path
+        QMessageBox.critical(self, "Error", f"Failed to list remote directory '{normalized_path}':\n{error_msg}")
+
+        # Try to navigate to parent directory on error
+        if normalized_path != "/":
+            parent_path = self.get_parent_path(normalized_path)
+            self.remote_current_path = parent_path
+            self.remote_path_edit.setText(parent_path)
+            # Retry loading parent directory
+            self.load_remote_directory()
+        else:
+            # If we can't even access root, there's a connection problem
+            QMessageBox.warning(self, "Connection Error",
+                              "Cannot access remote filesystem. Please check your connection.")
+            self.remote_model.populate([])
+
+    def on_load_finished(self):
+        """Handle loading completion"""
+        self.is_loading = False
+        self.remote_progress.setVisible(False)
+        self.refresh_btn.setEnabled(True)
 
     def show_remote_context_menu(self, pos):
         """Show context menu for remote files"""

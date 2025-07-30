@@ -4,8 +4,9 @@
         "host": "10.67.73.254",
         "port": 22,
         "user": "maojunyi",
+        "default_dir": "/home/maojunyi",
         "auth_method": "password",
-        "password": "gAAAAABoiW8wmdDljIsmvnOLIhTGOxU8fqg9T3aUA2ov2LFgcIMFjcN2YbsbB46gcCTBzsqydfVb4JhhFJRxOinRBUNr7zubQg==",
+        "password": "gAAAAABoiX0dJmpEAL5bxHakgZXPfG6jEP7oBaFTSHT9-E-JxkDEIdEpo79ENbwbvJJ41CeaECENmFNduKCg5fELI0VcRZlpog==",
         "key_path": null
     }
 }

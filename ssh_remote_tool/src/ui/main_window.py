@@ -12,6 +12,7 @@ from ui.connection_manager_widget import ConnectionManagerWidget
 from ui.file_browser_widget import FileBrowserWidget
 from ui.script_panel_widget import ScriptPanelWidget
 from ui.log_panel_widget import LogPanelWidget
+from utils.performance_monitor import get_performance_monitor, monitor_ui_operation
 
 
 class MainWindow(QMainWindow):
@@ -24,7 +25,15 @@ class MainWindow(QMainWindow):
         self.file_manager = FileManager(self.ssh_manager)
         self.script_executor = ScriptExecutor(self.ssh_manager)
 
+        # Initialize performance monitoring
+        self.performance_monitor = get_performance_monitor()
+        self.performance_monitor.set_components(self.ssh_manager, self.file_manager)
+        self.performance_monitor.performance_warning.connect(self.on_performance_warning)
+
         self.setup_ui()
+
+        # Start performance monitoring
+        self.performance_monitor.start_monitoring()
 
     def setup_ui(self):
         # Main horizontal splitter (Left Sidebar | Main Content)
@@ -110,6 +119,32 @@ class MainWindow(QMainWindow):
             self.log_panel.add_log(f"Connected to {connection_name}", "success")
         else:
             self.connection_status_label.setText("Not connected")
+
+    def on_performance_warning(self, warning_type: str, message: str):
+        """处理性能警告"""
+        print(f"⚠️  性能警告 [{warning_type}]: {message}")
+        # 可以在这里添加UI通知，比如状态栏消息或弹窗
+        if hasattr(self, 'statusBar'):
+            self.statusBar().showMessage(f"性能警告: {message}", 5000)
+
+    def closeEvent(self, event):
+        """窗口关闭时的清理工作"""
+        # 停止性能监控
+        self.performance_monitor.stop_monitoring()
+
+        # 清理连接
+        self.ssh_manager.disconnect_all()
+        self.file_manager.cleanup_connections()
+
+        # 导出性能报告
+        try:
+            import os
+            report_path = os.path.join(os.path.dirname(__file__), '..', '..', 'performance_report.json')
+            self.performance_monitor.export_metrics(report_path)
+        except Exception as e:
+            print(f"导出性能报告失败: {e}")
+
+        event.accept()
 
 def main():
     # This is for testing this component independently.
