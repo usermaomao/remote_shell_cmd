@@ -21,3 +21,5 @@ ssh_remote_tool/src/core/__pycache__/ssh_manager.cpython-313.pyc
 ssh_remote_tool/src/utils/__pycache__/__init__.cpython-310.pyc
 ssh_remote_tool/src/utils/__pycache__/performance_monitor.cpython-310.pyc
 
+ssh_remote_tool/release/connections.json
+ssh_remote_tool/release/secret.key
