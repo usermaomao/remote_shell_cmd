@@ -12,3 +12,12 @@ ssh_remote_tool/src/ui/__pycache__/main_window.cpython-310.pyc
 ssh_remote_tool/src/ui/__pycache__/remote_directory_dialog.cpython-310.pyc
 ssh_remote_tool/src/ui/__pycache__/remote_file_dialog.cpython-310.pyc
 ssh_remote_tool/src/ui/__pycache__/script_panel_widget.cpython-310.pyc
+ssh_remote_tool/src/__pycache__/main.cpython-313.pyc
+ssh_remote_tool/src/core/__pycache__/__init__.cpython-313.pyc
+ssh_remote_tool/src/core/__pycache__/credentials_manager.cpython-313.pyc
+ssh_remote_tool/src/core/__pycache__/file_manager.cpython-313.pyc
+ssh_remote_tool/src/core/__pycache__/script_executor.cpython-313.pyc
+ssh_remote_tool/src/core/__pycache__/ssh_manager.cpython-313.pyc
+ssh_remote_tool/src/utils/__pycache__/__init__.cpython-310.pyc
+ssh_remote_tool/src/utils/__pycache__/performance_monitor.cpython-310.pyc
+

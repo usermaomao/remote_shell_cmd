@@ -1,3 +1,21 @@
-PyQt6
-paramiko
-cryptography
+# SSH远程工具依赖包
+# 用于构建Windows可执行文件
+
+# GUI框架
+PyQt6>=6.4.0
+
+# SSH连接
+paramiko>=2.9.0
+
+# 加密支持
+cryptography>=3.4.8
+
+# 系统监控
+psutil>=5.8.0
+
+# 构建工具
+pyinstaller>=5.0.0
+
+# 可选：UPX压缩（减小exe文件大小）
+# 需要单独下载UPX: https://upx.github.io/
+# upx-ucl>=3.96
