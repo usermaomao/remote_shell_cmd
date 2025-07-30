@@ -1,4 +1,6 @@
 import datetime
+import re
+import html
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTextBrowser, QPushButton, QHBoxLayout,
     QFileDialog, QComboBox, QLabel, QCheckBox
@@ -30,6 +32,18 @@ class LogPanelWidget(QWidget):
 
         self.log_display = QTextBrowser()
         self.log_display.setReadOnly(True)
+
+        # Set font and styling for better readability
+        self.log_display.setStyleSheet("""
+            QTextBrowser {
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 10pt;
+                background-color: #f8f8f8;
+                border: 1px solid #ddd;
+                padding: 5px;
+            }
+        """)
+
         self.layout.addWidget(self.log_display)
 
         button_layout = QHBoxLayout()
@@ -42,6 +56,33 @@ class LogPanelWidget(QWidget):
 
         self.clear_btn.clicked.connect(self.clear_logs)
         self.export_btn.clicked.connect(self.export_log)
+
+    def clean_ansi_codes(self, text):
+        """Remove ANSI color codes and control sequences from text"""
+        # Remove ANSI escape sequences
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        text = ansi_escape.sub('', text)
+
+        # Remove other control characters but keep newlines and tabs
+        text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
+
+        return text
+
+    def format_message_for_html(self, message):
+        """Format message for HTML display with proper line breaks"""
+        # Clean ANSI codes first
+        message = self.clean_ansi_codes(message)
+
+        # Escape HTML characters
+        message = html.escape(message)
+
+        # Convert newlines to HTML line breaks
+        message = message.replace('\n', '<br>')
+
+        # Convert multiple spaces to non-breaking spaces to preserve formatting
+        message = re.sub(r'  +', lambda m: '&nbsp;' * len(m.group()), message)
+
+        return message
 
     def add_log(self, message, msg_type='info'):
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -74,14 +115,18 @@ class LogPanelWidget(QWidget):
                (filter_type == 'output' and msg_type in ['stdout', 'stderr']):
 
                 color_map = {
-                    'stdout': 'black',
-                    'stderr': 'red',
-                    'info': 'blue',
-                    'success': 'green'
+                    'stdout': '#2E8B57',      # Sea Green
+                    'stderr': '#DC143C',      # Crimson
+                    'info': '#4169E1',        # Royal Blue
+                    'success': '#228B22',     # Forest Green
+                    'error': '#DC143C'        # Crimson
                 }
-                color = color_map.get(msg_type, 'black')
+                color = color_map.get(msg_type, '#000000')  # Default black
 
-                formatted_message = f'<span style="color: {color};"><b>[{log_entry["timestamp"]}] [{msg_type.upper()}]</b>: {log_entry["message"]}</span>'
+                # Format the message with proper HTML formatting
+                clean_message = self.format_message_for_html(log_entry["message"])
+
+                formatted_message = f'<span style="color: {color};"><b>[{log_entry["timestamp"]}] [{msg_type.upper()}]</b>: {clean_message}</span>'
                 self.log_display.append(formatted_message)
 
         # Auto scroll to end if enabled

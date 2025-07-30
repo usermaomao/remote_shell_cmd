@@ -1,1 +1,11 @@
-{}
+{
+    "repack": {
+        "name": "repack",
+        "host": "10.67.73.254",
+        "port": 22,
+        "user": "maojunyi",
+        "auth_method": "password",
+        "password": "gAAAAABoiW8wmdDljIsmvnOLIhTGOxU8fqg9T3aUA2ov2LFgcIMFjcN2YbsbB46gcCTBzsqydfVb4JhhFJRxOinRBUNr7zubQg==",
+        "key_path": null
+    }
+}

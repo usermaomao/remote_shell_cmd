@@ -22,11 +22,14 @@ class ConnectionDialog(QDialog):
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_path = QLineEdit()
         self.key_browse_btn = QPushButton("Browse...")
+        self.default_dir = QLineEdit("/")
+        self.default_dir.setPlaceholderText("Default remote directory (e.g., /home/user)")
 
         self.layout.addRow("Connection Name:", self.name)
         self.layout.addRow("Host:", self.host)
         self.layout.addRow("Port:", self.port)
         self.layout.addRow("User:", self.user)
+        self.layout.addRow("Default Directory:", self.default_dir)
         self.layout.addRow("Auth Method:", self.auth_method)
         self.layout.addRow("Password:", self.password)
 
@@ -52,6 +55,7 @@ class ConnectionDialog(QDialog):
             self.host.setText(connection_data.get("host", ""))
             self.port.setText(str(connection_data.get("port", "22")))
             self.user.setText(connection_data.get("user", ""))
+            self.default_dir.setText(connection_data.get("default_dir", "/"))
             self.auth_method.setCurrentText(connection_data.get("auth_method", "password"))
             self.password.setText(connection_data.get("password", ""))
             self.key_path.setText(connection_data.get("key_path", ""))
@@ -79,6 +83,7 @@ class ConnectionDialog(QDialog):
             "host": self.host.text(),
             "port": int(self.port.text()),
             "user": self.user.text(),
+            "default_dir": self.default_dir.text() or "/",
             "auth_method": self.auth_method.currentText(),
             "password": self.password.text() if self.auth_method.currentText() == "password" else None,
             "key_path": self.key_path.text() if self.auth_method.currentText() == "key" else None,

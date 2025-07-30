@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 from core.script_executor import ScriptExecutor
+from ui.remote_file_dialog import RemoteFileDialog
 
 class ScriptPanelWidget(QWidget):
     log_message = pyqtSignal(str, str) # message, type ('stdout', 'stderr', 'info')
@@ -13,6 +14,7 @@ class ScriptPanelWidget(QWidget):
         super().__init__(parent)
         self.script_executor = script_executor
         self.current_connection = None
+        self.file_manager = None  # Will be set by main window
 
         self.layout = QVBoxLayout(self)
 
@@ -29,13 +31,19 @@ class ScriptPanelWidget(QWidget):
         options_layout = QHBoxLayout()
         self.exec_dir_label = QLabel("Working Directory:")
         self.exec_dir_input = QLineEdit(".")
+        self.browse_dir_btn = QPushButton("Browse...")
         self.params_label = QLabel("Parameters:")
         self.params_input = QLineEdit()
+
         options_layout.addWidget(self.exec_dir_label)
         options_layout.addWidget(self.exec_dir_input)
+        options_layout.addWidget(self.browse_dir_btn)
         options_layout.addWidget(self.params_label)
         options_layout.addWidget(self.params_input)
         self.layout.addLayout(options_layout)
+
+        # Connect browse directory button
+        self.browse_dir_btn.clicked.connect(self.browse_working_directory)
 
         # Action Buttons
         button_layout = QHBoxLayout()
@@ -82,12 +90,25 @@ class ScriptPanelWidget(QWidget):
         file_layout.addWidget(self.browse_script_btn)
         layout.addLayout(file_layout)
 
-        # Script preview
+        # Script preview with better sizing
+        preview_label = QLabel("Script Preview:")
+        preview_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+        layout.addWidget(preview_label)
+
         self.script_preview = QTextEdit()
-        self.script_preview.setPlaceholderText("Script content will be shown here...")
+        self.script_preview.setPlaceholderText("Select a script file to preview its content...")
         self.script_preview.setReadOnly(True)
-        self.script_preview.setMaximumHeight(150)
-        layout.addWidget(QLabel("Script Preview:"))
+        # Remove height restriction to allow more content
+        self.script_preview.setMinimumHeight(100)
+        # Set font for better code readability
+        self.script_preview.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 9pt;
+                background-color: #f8f8f8;
+                border: 1px solid #ddd;
+            }
+        """)
         layout.addWidget(self.script_preview)
 
         # Connect signals
@@ -104,6 +125,16 @@ class ScriptPanelWidget(QWidget):
             self.script_input.setEnabled(is_connected)
         if hasattr(self, 'browse_script_btn'):
             self.browse_script_btn.setEnabled(is_connected)
+        if hasattr(self, 'browse_dir_btn'):
+            self.browse_dir_btn.setEnabled(is_connected)
+
+    def set_file_manager(self, file_manager):
+        """Set the file manager for remote file browsing"""
+        self.file_manager = file_manager
+
+    def set_ssh_manager(self, ssh_manager):
+        """Set the SSH manager for accessing connection settings"""
+        self.ssh_manager = ssh_manager
 
     def handle_output(self, message, msg_type):
         self.log_message.emit(message, msg_type)
@@ -180,23 +211,88 @@ class ScriptPanelWidget(QWidget):
             QMessageBox.warning(self, "Warning", "No active connection.")
             return
 
-        # For now, let user input the path manually
-        # In a full implementation, this would open a file browser dialog
-        script_path, ok = QInputDialog.getText(
-            self, "Select Script File",
-            "Enter the full path to the script file on remote server:"
+        if not self.file_manager:
+            QMessageBox.warning(self, "Warning", "File manager not available.")
+            return
+
+        # Get default directory from connection settings
+        initial_path = "/"
+        if hasattr(self, 'ssh_manager') and self.ssh_manager and self.current_connection:
+            conn_data = self.ssh_manager.get_connection(self.current_connection)
+            if conn_data:
+                initial_path = conn_data.get("default_dir", "/")
+
+        # Open remote file dialog with script file filter
+        script_extensions = ['.sh', '.py', '.pl', '.rb', '.js', '.bat', '.cmd']
+        selected_file = RemoteFileDialog.get_remote_file(
+            self.file_manager,
+            self.current_connection,
+            initial_path=initial_path,
+            file_filter=script_extensions,
+            parent=self
         )
 
-        if ok and script_path:
-            self.script_file_input.setText(script_path)
-            self.load_script_preview(script_path)
+        if selected_file:
+            self.script_file_input.setText(selected_file)
+            self.load_script_preview(selected_file)
+
+    def browse_working_directory(self):
+        """Browse and select working directory from remote server"""
+        if not self.current_connection:
+            QMessageBox.warning(self, "Warning", "No active connection.")
+            return
+
+        if not self.file_manager:
+            QMessageBox.warning(self, "Warning", "File manager not available.")
+            return
+
+        # Get initial path from current input or connection default
+        initial_path = self.exec_dir_input.text() or "/"
+        if initial_path == "." and hasattr(self, 'ssh_manager') and self.ssh_manager and self.current_connection:
+            conn_data = self.ssh_manager.get_connection(self.current_connection)
+            if conn_data:
+                initial_path = conn_data.get("default_dir", "/")
+
+        # Create a modified dialog for directory selection
+        from ui.remote_directory_dialog import RemoteDirectoryDialog
+        selected_dir = RemoteDirectoryDialog.get_remote_directory(
+            self.file_manager,
+            self.current_connection,
+            initial_path=initial_path,
+            parent=self
+        )
+
+        if selected_dir:
+            self.exec_dir_input.setText(selected_dir)
 
     def load_script_preview(self, script_path):
         """Load and preview the selected script file"""
         try:
-            # This is a simplified implementation
-            # In a real app, you'd use SFTP to read the file content
-            self.script_preview.setPlainText(f"Preview for: {script_path}\n\n[Script content would be loaded here]")
+            if self.file_manager and self.current_connection:
+                try:
+                    # Use SFTP to read file content (first 3000 characters for better preview)
+                    ssh_client = self.file_manager.ssh_manager.get_client(self.current_connection)
+                    if ssh_client:
+                        sftp = ssh_client.open_sftp()
+                        try:
+                            with sftp.file(script_path, 'r') as f:
+                                content = f.read(3000).decode('utf-8', errors='ignore')
+                                if len(content) == 3000:
+                                    # Find the last complete line to avoid cutting in the middle
+                                    last_newline = content.rfind('\n')
+                                    if last_newline > 2500:  # Keep most content
+                                        content = content[:last_newline]
+                                    content += "\n\n... (file truncated for preview)"
+                                self.script_preview.setPlainText(content)
+                        finally:
+                            sftp.close()
+                    else:
+                        self.script_preview.setPlainText("[No connection available]")
+                except Exception as e:
+                    self.script_preview.setPlainText(f"[Error loading file: {str(e)}]")
+            else:
+                self.script_preview.setPlainText("[File manager not available]")
+
             self.log_message.emit(f"Selected script file: {script_path}", "info")
         except Exception as e:
             self.log_message.emit(f"Failed to load script preview: {e}", "stderr")

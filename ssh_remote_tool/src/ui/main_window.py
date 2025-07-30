@@ -37,33 +37,42 @@ class MainWindow(QMainWindow):
         # Main content area (vertically split)
         main_content_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Top part of main content: File Browser
+        # Top part of main content: File Browser (reduced size)
         self.file_browser = FileBrowserWidget(self.file_manager)
         main_content_splitter.addWidget(self.file_browser)
 
-        # Bottom part of main content: Tabbed panel for Scripting and Logs
-        self.bottom_panel = QTabWidget()
+        # Bottom part of main content: Script and Log panels side by side
+        script_log_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Script panel
         self.script_panel = ScriptPanelWidget(self.script_executor)
+        self.script_panel.set_file_manager(self.file_manager)  # Pass file manager for remote browsing
+        self.script_panel.set_ssh_manager(self.ssh_manager)    # Pass SSH manager for connection settings
+        script_log_splitter.addWidget(self.script_panel)
+
+        # Log panel
         self.log_panel = LogPanelWidget()
-        self.bottom_panel.addTab(self.script_panel, "Script")
-        self.bottom_panel.addTab(self.log_panel, "Log")
-        main_content_splitter.addWidget(self.bottom_panel)
+        script_log_splitter.addWidget(self.log_panel)
+
+        # Set equal sizes for script and log panels
+        script_log_splitter.setSizes([700, 700])  # Equal split
+
+        main_content_splitter.addWidget(script_log_splitter)
 
         # Connect signals
-        self.connection_manager.connection_selected.connect(self.file_browser.set_connection)
-        self.connection_manager.connection_selected.connect(self.script_panel.set_connection)
+        self.connection_manager.connection_selected.connect(self.on_connection_selected)
         self.script_panel.log_message.connect(self.log_panel.add_log)
 
         # Connect file manager to log panel for file operation messages
         # Note: In a full implementation, file_manager would emit signals for logging
 
-        # Set initial sizes for the vertical splitter
-        main_content_splitter.setSizes([600, 300]) # 60% and 40% of 900px height
+        # Set initial sizes for the vertical splitter (1/3 for file browser, 2/3 for script/log)
+        main_content_splitter.setSizes([300, 600]) # 1/3 and 2/3 of 900px height
 
         # Add the main content splitter to the main horizontal splitter
         main_splitter.addWidget(main_content_splitter)
 
-        # Set initial sizes for the horizontal splitter
+        # Set initial sizes for the horizontal splitter (smaller sidebar)
         main_splitter.setSizes([280, 1120]) # 20% and 80% of 1400px width
 
         self.setCentralWidget(main_splitter)
@@ -86,6 +95,13 @@ class MainWindow(QMainWindow):
 
         # Connect to connection manager signals to update status
         self.connection_manager.connection_selected.connect(self.update_connection_status)
+
+    def on_connection_selected(self, connection_name):
+        """Handle connection selection"""
+        # Pass ssh_manager to file browser for default directory support
+        self.file_browser.set_connection(connection_name, self.ssh_manager)
+        self.script_panel.set_connection(connection_name)
+        self.update_connection_status(connection_name)
 
     def update_connection_status(self, connection_name):
         """Update the connection status in status bar"""

@@ -1,5 +1,6 @@
 import os
 import datetime
+import posixpath
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTreeView, QPushButton,
     QLineEdit, QLabel, QSplitter, QHeaderView,
@@ -38,6 +39,7 @@ class FileBrowserWidget(QWidget):
         super().__init__(parent)
         self.file_manager = file_manager
         self.current_connection = None
+        self.remote_current_path = "/"  # Track current remote path
 
         self.layout = QVBoxLayout(self)
 
@@ -64,12 +66,18 @@ class FileBrowserWidget(QWidget):
         self.upload_btn = QPushButton("Upload")
         self.download_btn = QPushButton("Download")
         self.new_folder_btn = QPushButton("New Folder")
+        self.back_btn = QPushButton("Back")
+        self.home_btn = QPushButton("Home")
 
         self.refresh_btn.clicked.connect(self.refresh_views)
         self.upload_btn.clicked.connect(self.upload_selected_file)
         self.download_btn.clicked.connect(self.download_selected_file)
         self.new_folder_btn.clicked.connect(self.create_new_folder)
+        self.back_btn.clicked.connect(self.go_back)
+        self.home_btn.clicked.connect(self.go_home)
 
+        toolbar_layout.addWidget(self.back_btn)
+        toolbar_layout.addWidget(self.home_btn)
         toolbar_layout.addWidget(self.refresh_btn)
         toolbar_layout.addWidget(self.upload_btn)
         toolbar_layout.addWidget(self.download_btn)
@@ -114,7 +122,7 @@ class FileBrowserWidget(QWidget):
         layout.addWidget(self.remote_path_edit)
         layout.addWidget(self.remote_tree)
 
-        self.remote_path_edit.returnPressed.connect(self.load_remote_directory)
+        self.remote_path_edit.returnPressed.connect(self.navigate_to_path)
         self.remote_tree.doubleClicked.connect(self.remote_item_double_clicked)
 
         # Add context menu for remote files
@@ -123,8 +131,86 @@ class FileBrowserWidget(QWidget):
 
         return widget
 
-    def set_connection(self, connection_name):
+    def normalize_remote_path(self, path):
+        """Normalize remote path to use forward slashes and handle edge cases"""
+        if not path:
+            return "/"
+
+        # Convert to forward slashes
+        path = path.replace('\\', '/')
+
+        # Ensure it starts with /
+        if not path.startswith('/'):
+            path = '/' + path
+
+        # Remove double slashes
+        while '//' in path:
+            path = path.replace('//', '/')
+
+        # Remove trailing slash unless it's root
+        if len(path) > 1 and path.endswith('/'):
+            path = path.rstrip('/')
+
+        return path
+
+    def join_remote_path(self, base_path, *parts):
+        """Join remote path parts using posixpath for consistent forward slashes"""
+        # Use posixpath.join for Unix-style paths
+        result = posixpath.join(base_path, *parts)
+        # Normalize and resolve any ".." components
+        result = posixpath.normpath(result)
+        return self.normalize_remote_path(result)
+
+    def get_parent_path(self, path):
+        """Get parent directory of given path"""
+        path = self.normalize_remote_path(path)
+        if path == "/":
+            return "/"
+        return posixpath.dirname(path)
+
+    def go_back(self):
+        """Navigate to parent directory"""
+        if not self.current_connection:
+            return
+
+        parent_path = self.get_parent_path(self.remote_current_path)
+        self.remote_current_path = parent_path
+        self.remote_path_edit.setText(parent_path)
+        self.load_remote_directory()
+
+    def go_home(self):
+        """Navigate to home directory"""
+        if not self.current_connection:
+            return
+
+        self.remote_current_path = "/"
+        self.remote_path_edit.setText("/")
+        self.load_remote_directory()
+
+    def navigate_to_path(self):
+        """Navigate to the path entered in the path edit field"""
+        if not self.current_connection:
+            return
+
+        requested_path = self.remote_path_edit.text()
+        normalized_path = self.normalize_remote_path(requested_path)
+
+        # Update current path and load directory
+        self.remote_current_path = normalized_path
+        self.load_remote_directory()
+
+    def set_connection(self, connection_name, ssh_manager=None):
         self.current_connection = connection_name
+
+        # Get default directory from connection settings
+        default_dir = "/"
+        if ssh_manager and connection_name:
+            conn_data = ssh_manager.get_connection(connection_name)
+            if conn_data:
+                default_dir = conn_data.get("default_dir", "/")
+
+        self.remote_current_path = self.normalize_remote_path(default_dir)
+        self.remote_path_edit.setText(self.remote_current_path)
         self.load_remote_directory()
 
     def navigate_local_path(self):
@@ -139,27 +225,49 @@ class FileBrowserWidget(QWidget):
     def remote_item_double_clicked(self, index):
         item_data = self.remote_model.itemFromIndex(index).data(Qt.ItemDataRole.UserRole)
         if item_data and item_data['is_dir']:
-            new_path = os.path.join(self.remote_path_edit.text(), item_data['name'])
-            self.remote_path_edit.setText(new_path)
-            self.load_remote_directory()
+            self.enter_directory(item_data['name'])
 
     def load_remote_directory(self):
         if not self.current_connection:
             return
 
-        remote_path = self.remote_path_edit.text()
-        if not remote_path.startswith('/'):
-            remote_path = '/' + remote_path
+        # Get path from edit field and normalize it
+        requested_path = self.remote_path_edit.text()
+        normalized_path = self.normalize_remote_path(requested_path)
 
         try:
-            files = self.file_manager.list_directory(self.current_connection, remote_path)
+            files = self.file_manager.list_directory(self.current_connection, normalized_path)
+
+            # Add ".." entry for parent directory if not at root
+            if normalized_path != "/":
+                parent_entry = {
+                    "name": "..",
+                    "size": 0,
+                    "mtime": 0,
+                    "permissions": "drwxr-xr-x",
+                    "is_dir": True,
+                }
+                files.insert(0, parent_entry)
+
             self.remote_model.populate(files)
+            self.remote_current_path = normalized_path
+            self.remote_path_edit.setText(normalized_path)
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to list remote directory: {e}")
-            # Navigate back to root on error
-            self.remote_path_edit.setText("/")
-            if self.remote_path_edit.text() != remote_path:
+            error_msg = str(e)
+            QMessageBox.critical(self, "Error", f"Failed to list remote directory '{normalized_path}':\n{error_msg}")
+
+            # Try to navigate to parent directory on error
+            if normalized_path != "/":
+                parent_path = self.get_parent_path(normalized_path)
+                self.remote_current_path = parent_path
+                self.remote_path_edit.setText(parent_path)
                 self.load_remote_directory()
+            else:
+                # If we can't even access root, there's a connection problem
+                QMessageBox.warning(self, "Connection Error",
+                                  "Cannot access remote filesystem. Please check your connection.")
+                self.remote_model.populate([])
 
     def show_remote_context_menu(self, pos):
         """Show context menu for remote files"""
@@ -200,10 +308,15 @@ class FileBrowserWidget(QWidget):
 
     def enter_directory(self, dir_name):
         """Enter a directory"""
-        current_path = self.remote_path_edit.text()
-        new_path = os.path.join(current_path, dir_name).replace('\\', '/')
-        self.remote_path_edit.setText(new_path)
-        self.load_remote_directory()
+        if dir_name == "..":
+            # Navigate to parent directory
+            self.go_back()
+        else:
+            # Navigate to subdirectory
+            new_path = self.join_remote_path(self.remote_current_path, dir_name)
+            self.remote_current_path = new_path
+            self.remote_path_edit.setText(new_path)
+            self.load_remote_directory()
 
     def download_file(self, filename):
         """Download a file from remote to local"""
@@ -211,16 +324,16 @@ class FileBrowserWidget(QWidget):
             QMessageBox.warning(self, "Warning", "No active connection.")
             return
 
-        remote_path = os.path.join(self.remote_path_edit.text(), filename).replace('\\', '/')
+        remote_path = self.join_remote_path(self.remote_current_path, filename)
 
         # Get local save path
-        local_path, _ = QInputDialog.getText(
+        local_path, ok = QInputDialog.getText(
             self, "Download File",
             f"Save '{filename}' to local path:",
             text=os.path.join(self.local_path_edit.text(), filename)
         )
 
-        if local_path:
+        if ok and local_path:
             try:
                 self.file_manager.download_file(self.current_connection, remote_path, local_path)
                 QMessageBox.information(self, "Success", f"Downloaded '{filename}' successfully.")
@@ -239,6 +352,10 @@ class FileBrowserWidget(QWidget):
             QMessageBox.warning(self, "Warning", "No active connection.")
             return
 
+        # Don't allow deleting parent directory entry
+        if name == "..":
+            return
+
         item_type = "directory" if is_dir else "file"
         reply = QMessageBox.question(
             self, "Confirm Delete",
@@ -248,7 +365,7 @@ class FileBrowserWidget(QWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                remote_path = os.path.join(self.remote_path_edit.text(), name).replace('\\', '/')
+                remote_path = self.join_remote_path(self.remote_current_path, name)
                 if is_dir:
                     self.file_manager.delete_directory(self.current_connection, remote_path)
                 else:
@@ -264,14 +381,18 @@ class FileBrowserWidget(QWidget):
             QMessageBox.warning(self, "Warning", "No active connection.")
             return
 
+        # Don't allow renaming parent directory entry
+        if old_name == "..":
+            return
+
         new_name, ok = QInputDialog.getText(
             self, "Rename", f"Enter new name for '{old_name}':", text=old_name
         )
 
         if ok and new_name and new_name != old_name:
             try:
-                old_path = os.path.join(self.remote_path_edit.text(), old_name).replace('\\', '/')
-                new_path = os.path.join(self.remote_path_edit.text(), new_name).replace('\\', '/')
+                old_path = self.join_remote_path(self.remote_current_path, old_name)
+                new_path = self.join_remote_path(self.remote_current_path, new_name)
                 self.file_manager.rename_file(self.current_connection, old_path, new_path)
                 QMessageBox.information(self, "Success", f"Renamed '{old_name}' to '{new_name}' successfully.")
                 self.load_remote_directory()
@@ -303,14 +424,17 @@ class FileBrowserWidget(QWidget):
             return
 
         # Get remote save path
+        default_remote_path = self.join_remote_path(self.remote_current_path, filename)
         remote_path, ok = QInputDialog.getText(
             self, "Upload File",
             f"Upload '{filename}' to remote path:",
-            text=os.path.join(self.remote_path_edit.text(), filename).replace('\\', '/')
+            text=default_remote_path
         )
 
         if ok and remote_path:
             try:
+                # Normalize the remote path
+                remote_path = self.normalize_remote_path(remote_path)
                 self.file_manager.upload_file(self.current_connection, local_path, remote_path)
                 QMessageBox.information(self, "Success", f"Uploaded '{filename}' successfully.")
                 # Refresh remote view
@@ -373,7 +497,7 @@ class FileBrowserWidget(QWidget):
 
         if ok and folder_name:
             try:
-                remote_path = os.path.join(self.remote_path_edit.text(), folder_name).replace('\\', '/')
+                remote_path = self.join_remote_path(self.remote_current_path, folder_name)
                 self.file_manager.create_directory(self.current_connection, remote_path)
                 QMessageBox.information(self, "Success", f"Created folder '{folder_name}' successfully.")
                 self.load_remote_directory()
